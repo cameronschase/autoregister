@@ -15,17 +15,14 @@ Advanced User Usage:
     python extract_data.py <url1> [url2 ...]
 or edit URLS list at the bottom.
 """
-
 import os
 import re
 import sys
 import time
 from datetime import datetime
- 
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
- 
  
 DATE_RE = re.compile(
     r"^(January|February|March|April|May|June|July|August|"
@@ -47,7 +44,6 @@ PURSUANT_RE = re.compile(
  
 DDTC_RE = re.compile(r"DDTC\s*(\d+[-–]\d+)")
  
- 
 def parse_page_html(html: str, source_url: str) -> list[dict]:
     """Parse the HTML of a single Federal Register notice page."""
     soup = BeautifulSoup(html, "html.parser")
@@ -61,7 +57,6 @@ def parse_page_html(html: str, source_url: str) -> list[dict]:
             blocks.append((element.name, text))
  
     return parse_blocks(blocks, source_url)
- 
  
 def parse_blocks(blocks: list[tuple[str, str]], source_url: str) -> list[dict]:
     """Walk the (tag, text) blocks and emit one row per letter."""
@@ -112,7 +107,6 @@ def parse_blocks(blocks: list[tuple[str, str]], source_url: str) -> list[dict]:
         rows.append(finalize(current))
     return rows
  
- 
 def finalize(r: dict) -> dict:
     """Turn the in-progress dict into the final flat row."""
     # Date -> real date object, or None if missing (gives a blank cell in Excel)
@@ -152,7 +146,6 @@ def fetch_and_extract(url: str) -> list[dict]:
     resp.raise_for_status()
     return parse_page_html(resp.text, url)
  
- 
 def prompt_for_urls() -> list[str]:
     """Ask the user to paste URLs.  Accepts one or many, separated by any
     whitespace (spaces, tabs, newlines).  Finish with a blank line."""
@@ -177,10 +170,9 @@ def prompt_for_urls() -> list[str]:
     urls = [t for t in raw_tokens if t.startswith("http://") or t.startswith("https://")]
     return urls
  
- 
 def main(urls):
     if not urls:
-        print("No URLs provided.  Exiting.")
+        print("No URLs provided. Exiting.")
         return
  
     print(f"\nProcessing {len(urls)} URL(s)...\n")
@@ -189,10 +181,10 @@ def main(urls):
         print(f"Fetching: {url}")
         try:
             rows = fetch_and_extract(url)
-            print(f"  -> {len(rows)} letters")
+            print(f"-> {len(rows)} letters")
             all_rows.extend(rows)
         except Exception as e:
-            print(f"  ERROR: {e}")
+            print(f"ERROR: {e}")
         time.sleep(1)  # be polite to the server
  
     if not all_rows:
@@ -200,7 +192,7 @@ def main(urls):
         return
  
     new_df = pd.DataFrame(all_rows)
-    out = "ddtc_extracted.xlsx"
+    out = "data_extracted.xlsx"
  
     # If the file already exists, merge with what's there.
     # "Replace on match" = if a Notification number appears in both the
@@ -278,7 +270,6 @@ def main(urls):
     print(f"\nDone. {msg}")
     print(f"Output: {out}")
  
- 
 def _is_blank(v) -> bool:
     """True if a value is empty / NaN / None / whitespace-only string."""
     if v is None:
@@ -295,7 +286,6 @@ def _is_blank(v) -> bool:
     return False
     print(f"Output: {out}")
  
- 
 def _pause_before_exit():
     """Keep the console window open when run as a standalone .exe so the
     user can see the results.  Does nothing if no console is attached."""
@@ -303,7 +293,6 @@ def _pause_before_exit():
         input("\nPress Enter to close...")
     except EOFError:
         pass
- 
  
 if __name__ == "__main__":
     # URLs may also be passed on the command line; if none given, prompt.
