@@ -4,7 +4,7 @@ Pulls Congressional Notification letters from [federalregister.gov](https://www.
 
 ## What you get
 
-Each letter on a Federal Register page becomes one row in `ddtc_extracted.xlsx` with these columns:
+Each letter on a Federal Register page becomes one row in `data_extracted.xlsx` with these columns:
 
 | Column | Source | Example |
 |---|---|---|
@@ -35,14 +35,14 @@ There are two ways to run it. Pick whichever fits.
    ```
 3. From this folder, run:
    ```
-   python extract_ddtc.py
+   python extract_data.py
    ```
 4. Paste one or more Federal Register URLs (separated by spaces or newlines), then press Enter on a blank line.
-5. The results land in `ddtc_extracted.xlsx` next to the script.
+5. The results land in `data_extracted.xlsx` next to the script.
 
 You can also pass URLs as arguments and skip the prompt:
 ```
-python extract_ddtc.py https://www.federalregister.gov/documents/... https://www.federalregister.gov/documents/...
+python extract_data.py https://www.federalregister.gov/documents/... https://www.federalregister.gov/documents/...
 ```
 
 ### Option B: Build a standalone .exe (Windows, no Python needed afterward)
@@ -52,7 +52,7 @@ python extract_ddtc.py https://www.federalregister.gov/documents/... https://www
 
 ## How append-and-merge works
 
-Each run **adds new rows** to `ddtc_extracted.xlsx`. If a Notification number in the new run is already in the spreadsheet, the row gets **merged**:
+Each run **adds new rows** to `data_extracted.xlsx`. If a Notification number in the new run is already in the spreadsheet, the row gets **merged**:
 
 - **New value wins** when the new run has data in a cell.
 - **Existing value is kept** when the new run's cell is blank.
