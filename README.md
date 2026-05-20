@@ -12,7 +12,7 @@ Each letter on a Federal Register page becomes one row in `data_extracted.xlsx` 
 | Notification number | The "Department Notification Number" line | 25-039 |
 | Section | The AECA section cited | Section 36(c) of the Arms Export Control Act |
 | Notification type | What's being proposed | proposed license amendment for the export of defense articles, including technical data, and defense services |
-| Amount | The dollar threshold | amount of $100,000,000 or more |
+| Amount | The dollar threshold | amount of $100,000,000 or "for the manufacture of significant military equipment abroad" |
 | Description | The "The transaction involves..." paragraph | The transaction contained in... |
 | Source URL | The Federal Register page the row came from | https://www.federalregister.gov/... |
 
