@@ -1,6 +1,6 @@
 """
 @author Cameron Chase
-May 18, 2026
+May 20, 2026
 cameron.chase@gmail.com
 
 Extract DDTC Congressional Notification letters from Federal Register pages into a structured spreadsheet with one row per letter.
@@ -29,40 +29,41 @@ DATE_RE = re.compile(
     r"September|October|November|December)\s+\d{1,2},\s+\d{4}$"
 )
  
-# Sentence that starts every letter's body:
-#   "Pursuant to <SECTION>, please find enclosed a certification of a
-#    <NOTIFICATION TYPE> in the <AMOUNT>."
-# It varies slightly ("a certificate" vs "a certification", "and" vs ","
-# between sections, the amount sometimes uses [$] etc), so we keep it loose.
+# Sentence that starts every letter's body, in two common forms:
+#   (A) "Pursuant to <SECTION>, please find enclosed a certification of a
+#        <NOTIFICATION TYPE> in the <AMOUNT>."
+#   (B) "Pursuant to <SECTION>, please find enclosed a certification of a
+#        <NOTIFICATION TYPE> for the manufacture of significant military
+#        equipment abroad."
 PURSUANT_RE = re.compile(
     r"Pursuant to\s+(?P<section>.+?)\s*,\s*"
     r"please find enclosed\s+(?:a certification|a certificate)\s+of\s+a\s+"
-    r"(?P<ntype>.+?)\s+in the\s+"
-    r"(?P<amount>amount of[^.]+?)\.",
+    r"(?P<ntype>.+?)\s+"
+    r"(?:"
+        r"in the\s+(?P<amount>amount of[^.]+?)"
+        r"|"
+        r"(?P<no_amount>for the manufacture[^.]+?)"
+    r")\.",
     re.IGNORECASE | re.DOTALL,
 )
- 
 DDTC_RE = re.compile(r"DDTC\s*(\d+[-–]\d+)")
  
 def parse_page_html(html: str, source_url: str) -> list[dict]:
     """Parse the HTML of a single Federal Register notice page."""
     soup = BeautifulSoup(html, "html.parser")
     body = soup.select_one("div.body") or soup
- 
     # Pull every heading and paragraph in document order.
     blocks = []
-    for element in body.find_all(["h2", "h3", "h4", "p"]):
-        text = element.get_text(" ", strip=True)
+    for el in body.find_all(["h2", "h3", "h4", "p"]):
+        text = el.get_text(" ", strip=True)
         if text:
-            blocks.append((element.name, text))
- 
+            blocks.append((el.name, text))
     return parse_blocks(blocks, source_url)
  
 def parse_blocks(blocks: list[tuple[str, str]], source_url: str) -> list[dict]:
     """Walk the (tag, text) blocks and emit one row per letter."""
     rows = []
     current = None  # the letter currently being built
- 
     for tag, text in blocks:
         # A date heading begins a new letter
         if tag == "h2" and DATE_RE.match(text):
@@ -71,7 +72,6 @@ def parse_blocks(blocks: list[tuple[str, str]], source_url: str) -> list[dict]:
             current = {"source_url": source_url, "date": text,
                        "ddtc": "", "pursuant_text": "", "description": ""}
             continue
- 
         # A "Congressional Notification Transmittal Letter" heading WITHOUT a
         # preceding date heading still starts a new letter — we just leave the
         # date blank for the user to fill in manually.
@@ -91,12 +91,11 @@ def parse_blocks(blocks: list[tuple[str, str]], source_url: str) -> list[dict]:
             if m:
                 current["ddtc"] = m.group(1)
                 # don't `continue` — same paragraph might also start "Pursuant to"
-
+                # (it doesn't on this site, but cheap safety).
         # The Pursuant-to paragraph
         if not current["pursuant_text"] and text.startswith("Pursuant to"):
             current["pursuant_text"] = text
             continue
-
         # The transaction-description paragraph (first one we hit after Pursuant)
         if (current["pursuant_text"]
                 and not current["description"]
@@ -117,15 +116,15 @@ def finalize(r: dict) -> dict:
             d = datetime.strptime(r["date"], "%B %d, %Y").date()
         except ValueError:
             d = r["date"]
- 
     # Parse Pursuant-to sentence into three fields
     section = ntype = amount = ""
     m = PURSUANT_RE.search(r["pursuant_text"])
     if m:
         section = m.group("section").strip()
         ntype = m.group("ntype").strip()
-        amount = m.group("amount").strip()
- 
+        # Either group "amount" (dollar threshold) or "no_amount" (36(d) form)
+        # will be populated, never both.
+        amount = (m.group("amount") or m.group("no_amount") or "").strip()
     return {
         "Notification date": d,
         "Notification number": r["ddtc"],
@@ -151,7 +150,6 @@ def prompt_for_urls() -> list[str]:
     whitespace (spaces, tabs, newlines).  Finish with a blank line."""
     print("Paste one or more Federal Register URLs below.")
     print("They can be on one line or many.  Press Enter on an empty line when done.\n")
- 
     pasted_lines = []
     while True:
         try:
@@ -164,7 +162,6 @@ def prompt_for_urls() -> list[str]:
             else:  # blank line before any content = keep waiting
                 continue
         pasted_lines.append(line)
- 
     # Split everything on whitespace and keep only http(s) URLs
     raw_tokens = " ".join(pasted_lines).split()
     urls = [t for t in raw_tokens if t.startswith("http://") or t.startswith("https://")]
@@ -172,28 +169,24 @@ def prompt_for_urls() -> list[str]:
  
 def main(urls):
     if not urls:
-        print("No URLs provided. Exiting.")
+        print("No URLs provided.  Exiting.")
         return
- 
     print(f"\nProcessing {len(urls)} URL(s)...\n")
     all_rows = []
     for url in urls:
         print(f"Fetching: {url}")
         try:
             rows = fetch_and_extract(url)
-            print(f"-> {len(rows)} letters")
+            print(f"  -> {len(rows)} letters")
             all_rows.extend(rows)
         except Exception as e:
-            print(f"ERROR: {e}")
+            print(f"  ERROR: {e}")
         time.sleep(1)  # be polite to the server
- 
     if not all_rows:
         print("\nNo letters were extracted.")
         return
- 
     new_df = pd.DataFrame(all_rows)
-    out = "data_extracted.xlsx"
- 
+    out = "ddtc_extracted.xlsx"
     # If the file already exists, merge with what's there.
     # "Replace on match" = if a Notification number appears in both the
     # existing file and the new data, the new row wins per-cell, BUT
@@ -211,14 +204,12 @@ def main(urls):
             print(f"\nWARNING: Could not read existing {out} ({e}).")
             print("The new rows will be written, but old rows may be lost.")
             existing_df = pd.DataFrame()
- 
         if not existing_df.empty and "Notification number" in existing_df.columns:
             # Build a lookup of existing rows by notification number
             existing_by_num = {
                 row["Notification number"]: row.to_dict()
                 for _, row in existing_df.iterrows()
             }
- 
             # For each row in the new data: if its number matches an existing
             # row, fill in any blank cells from the existing row.
             merged_rows = []
@@ -236,7 +227,6 @@ def main(urls):
                     merged_rows.append(merged)
                 else:
                     merged_rows.append(dict(new_row))
- 
             # Keep existing rows that aren't being replaced
             new_numbers = set(new_df["Notification number"])
             untouched = existing_df[
@@ -251,7 +241,6 @@ def main(urls):
             combined = new_df
             added = len(new_df)
             replaced = 0
- 
         msg = f"Added {added} new row(s)"
         if replaced:
             msg += f", updated {replaced} existing row(s)"
@@ -259,14 +248,12 @@ def main(urls):
     else:
         combined = new_df
         msg = f"Created new file with {len(combined)} row(s)."
- 
     try:
         combined.to_excel(out, index=False)
     except PermissionError:
         print(f"\nERROR: Can't write to {out} — is it open in Excel?")
         print("Close the file and run the program again.")
         return
- 
     print(f"\nDone. {msg}")
     print(f"Output: {out}")
  
