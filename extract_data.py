@@ -254,7 +254,7 @@ def main(urls):
         print(f"\nERROR: Can't write to {out} — is it open in Excel?")
         print("Close the file and run the program again.")
         return
-    #Fix date from excel format to standard format 45975 --> 5/15/2025
+    #Fix date from excel format to standard format 45975 --> November 14, 2025
     try:
         from openpyxl import load_workbook
         wb = load_workbook(out)
@@ -268,14 +268,12 @@ def main(urls):
         if date_col is not None:
             for row in ws.iter_rows(min_row=2, min_col=date_col, max_col=date_col):
                 for cell in row:
-                    cell.number_format = "m/d/yyyy"
+                    cell.number_format = "mmmm d, yyyy"
         wb.save(out)
     except Exception as e:
         # Formatting is a nicety, not a correctness issue — log and move on
         print(f"  (note: could not apply date formatting: {e})")
  
-    print(f"\nDone. {msg}")
-    print(f"Output: {out}")
     print(f"\nDone. {msg}")
     print(f"Output: {out}")
  
