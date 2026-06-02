@@ -15,6 +15,7 @@ Advanced User Usage:
     python extract_data.py <url1> [url2 ...]
 or edit URLS list at the bottom.
 """
+
 import os
 import re
 import sys
@@ -23,31 +24,32 @@ from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
- 
+from openpyxl import load_workbook
+
 DATE_RE = re.compile(
     r"^(January|February|March|April|May|June|July|August|"
     r"September|October|November|December)\s+\d{1,2},\s+\d{4}$"
 )
- 
 # Sentence that starts every letter's body, in two common forms:
 #   (A) "Pursuant to <SECTION>, please find enclosed a certification of a
 #        <NOTIFICATION TYPE> in the <AMOUNT>."
 #   (B) "Pursuant to <SECTION>, please find enclosed a certification of a
 #        <NOTIFICATION TYPE> for the manufacture of significant military
-#        equipment abroad."
+#        equipment abroad."   <-- Section 36(d) standalone form, no $ amount
+# We capture both with one regex by making the trailing clause alternation.
 PURSUANT_RE = re.compile(
     r"Pursuant to\s+(?P<section>.+?)\s*,\s*"
     r"please find enclosed\s+(?:a certification|a certificate)\s+of\s+a\s+"
     r"(?P<ntype>.+?)\s+"
     r"(?:"
-        r"in the\s+(?P<amount>amount of[^.]+?)"
+        r"in the\s+(?P<amount>amount of[^.]+?)"       # form A: has a dollar amount
         r"|"
-        r"(?P<no_amount>for the manufacture[^.]+?)"
+        r"(?P<no_amount>for the manufacture[^.]+?)"   # form B: 36(d) form
     r")\.",
     re.IGNORECASE | re.DOTALL,
 )
 DDTC_RE = re.compile(r"DDTC\s*(\d+[-–]\d+)")
- 
+
 def parse_page_html(html: str, source_url: str) -> list[dict]:
     """Parse the HTML of a single Federal Register notice page."""
     soup = BeautifulSoup(html, "html.parser")
@@ -59,7 +61,7 @@ def parse_page_html(html: str, source_url: str) -> list[dict]:
         if text:
             blocks.append((el.name, text))
     return parse_blocks(blocks, source_url)
- 
+
 def parse_blocks(blocks: list[tuple[str, str]], source_url: str) -> list[dict]:
     """Walk the (tag, text) blocks and emit one row per letter."""
     rows = []
@@ -104,8 +106,9 @@ def parse_blocks(blocks: list[tuple[str, str]], source_url: str) -> list[dict]:
             continue
     if current:
         rows.append(finalize(current))
+
     return rows
- 
+
 def finalize(r: dict) -> dict:
     """Turn the in-progress dict into the final flat row."""
     # Date -> real date object, or None if missing (gives a blank cell in Excel)
@@ -134,7 +137,7 @@ def finalize(r: dict) -> dict:
         "Description": r["description"],
         "Source URL": r["source_url"],
     }
- 
+
 def fetch_and_extract(url: str) -> list[dict]:
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -144,7 +147,7 @@ def fetch_and_extract(url: str) -> list[dict]:
     resp = requests.get(url, headers=headers, timeout=30)
     resp.raise_for_status()
     return parse_page_html(resp.text, url)
- 
+
 def prompt_for_urls() -> list[str]:
     """Ask the user to paste URLs.  Accepts one or many, separated by any
     whitespace (spaces, tabs, newlines).  Finish with a blank line."""
@@ -166,7 +169,7 @@ def prompt_for_urls() -> list[str]:
     raw_tokens = " ".join(pasted_lines).split()
     urls = [t for t in raw_tokens if t.startswith("http://") or t.startswith("https://")]
     return urls
- 
+
 def main(urls):
     if not urls:
         print("No URLs provided.  Exiting.")
@@ -182,6 +185,7 @@ def main(urls):
         except Exception as e:
             print(f"  ERROR: {e}")
         time.sleep(1)  # be polite to the server
+
     if not all_rows:
         print("\nNo letters were extracted.")
         return
@@ -254,9 +258,11 @@ def main(urls):
         print(f"\nERROR: Can't write to {out} — is it open in Excel?")
         print("Close the file and run the program again.")
         return
-    #Fix date from excel format to standard format 45975 --> November 14, 2025
+    # pandas writes dates as serial numbers without a number format, so Excel
+    # shows them as "45975" instead of "November 14, 2025".  Apply a long-date
+    # format to the Notification date column so they render correctly.
+    format_status = "applied"
     try:
-        from openpyxl import load_workbook
         wb = load_workbook(out)
         ws = wb.active
         # Find the column index of "Notification date" from the header row
@@ -265,18 +271,33 @@ def main(urls):
             if cell.value == "Notification date":
                 date_col = idx
                 break
-        if date_col is not None:
+        if date_col is None:
+            format_status = "skipped (no 'Notification date' column found)"
+        else:
+            count = 0
             for row in ws.iter_rows(min_row=2, min_col=date_col, max_col=date_col):
                 for cell in row:
-                    cell.number_format = "mmmm d, yyyy"
-        wb.save(out)
+                    # "mmmm d, yyyy" matches the wording on federalregister.gov
+                    # pages (e.g. "November 14, 2025"), while keeping the value
+                    # as a real date so Excel can sort/filter it.
+                    cell.number_format = 'mmmm d, yyyy'
+                    count += 1
+            wb.save(out)
+            format_status = f"applied to {count} cell(s)"
     except Exception as e:
-        # Formatting is a nicety, not a correctness issue — log and move on
-        print(f"  (note: could not apply date formatting: {e})")
- 
+        import traceback
+        format_status = f"FAILED: {type(e).__name__}: {e}"
+        print("\n" + "=" * 60)
+        print("WARNING: Date formatting failed.")
+        print("Dates may show as serial numbers (e.g. 45975) in Excel.")
+        print(f"Error: {type(e).__name__}: {e}")
+        print("Full traceback:")
+        traceback.print_exc()
+        print("=" * 60)
     print(f"\nDone. {msg}")
     print(f"Output: {out}")
- 
+    print(f"Date formatting: {format_status}")
+
 def _is_blank(v) -> bool:
     """True if a value is empty / NaN / None / whitespace-only string."""
     if v is None:
@@ -292,7 +313,7 @@ def _is_blank(v) -> bool:
         pass
     return False
     print(f"Output: {out}")
- 
+
 def _pause_before_exit():
     """Keep the console window open when run as a standalone .exe so the
     user can see the results.  Does nothing if no console is attached."""
@@ -300,7 +321,7 @@ def _pause_before_exit():
         input("\nPress Enter to close...")
     except EOFError:
         pass
- 
+
 if __name__ == "__main__":
     # URLs may also be passed on the command line; if none given, prompt.
     cli_urls = sys.argv[1:]

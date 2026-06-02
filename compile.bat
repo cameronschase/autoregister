@@ -37,7 +37,12 @@ REM --onefile    = single .exe (no folder of DLLs alongside)
 REM --console    = keep the black window so user sees prompts and output
 REM --name       = name of the output .exe
 REM --clean      = wipe PyInstaller's cache for a clean build
-python -m PyInstaller --onefile --console --clean --name extract_data extract_data.py
+REM --collect-all     = bundle openpyxl and all its submodules explicitly,
+REM                     in case PyInstaller's auto-detection misses any
+python -m PyInstaller --onefile --console --clean --name extract_data ^
+    --collect-all openpyxl ^
+    --hidden-import openpyxl ^
+    extract_data.py
 if errorlevel 1 (
     echo ERROR: PyInstaller build failed.
     pause
