@@ -46,8 +46,7 @@ PURSUANT_RE_WITH_AMOUNT = re.compile(
 PURSUANT_RE_NO_AMOUNT = re.compile(
     r"Pursuant to\s+(?P<section>.+?)\s*,\s*"
     r"please find enclosed\s+(?:a certification|a certificate)\s+of\s+a?n?\s*"
-    r"(?P<ntype>.+?)\s+"
-    r"(?:for the manufacture[^.]+?)\.",
+    r"(?P<ntype>.+?for the manufacture[^.]+?)\.",
     re.IGNORECASE | re.DOTALL,
 )
 DDTC_RE = re.compile(r"DDTC\s*(\d+[-–]\d+)")
