@@ -67,6 +67,7 @@ def parse_page_html(html: str, source_url: str) -> list[dict]:
         text = el.get_text(" ", strip=True)
         # Remove inline page-break markers and collapse any double spaces left
         text = page_break.sub(" ", text)
+        text = text.replace("[$]", "$")
         text = re.sub(r"\s{2,}", " ", text).strip()
         if text:
             blocks.append((el.name, text))
