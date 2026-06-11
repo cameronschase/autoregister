@@ -32,36 +32,46 @@ DATE_RE = re.compile(
 )
 # Sentence that starts every letter's body, in two common forms:
 #   (A) "Pursuant to <SECTION>, please find enclosed a certification of a
-#        <NOTIFICATION TYPE> in the <AMOUNT>."
+#        <NOTIFICATION TYPE> in the amount of $X or more..."
 #   (B) "Pursuant to <SECTION>, please find enclosed a certification of a
 #        <NOTIFICATION TYPE> for the manufacture of significant military
 #        equipment abroad."   <-- Section 36(d) standalone form, no $ amount
-# We capture both with one regex by making the trailing clause alternation.
-PURSUANT_RE = re.compile(
+PURSUANT_RE_WITH_AMOUNT = re.compile(
     r"Pursuant to\s+(?P<section>.+?)\s*,\s*"
-    r"please find enclosed\s+(?:a certification|a certificate)\s+of\s+a\s+"
+    r"please find enclosed\s+(?:a certification|a certificate)\s+of\s+a?n?\s*"
     r"(?P<ntype>.+?)\s+"
-    r"(?:"
-        r"in the\s+(?P<amount>amount of[^.]+?)"       # form A: has a dollar amount
-        r"|"
-        r"(?P<no_amount>for the manufacture[^.]+?)"   # form B: 36(d) form
-    r")\.",
+    r"in the\s+(?P<amount>amount of[^.]+?)\.",
+    re.IGNORECASE | re.DOTALL,
+)
+PURSUANT_RE_NO_AMOUNT = re.compile(
+    r"Pursuant to\s+(?P<section>.+?)\s*,\s*"
+    r"please find enclosed\s+(?:a certification|a certificate)\s+of\s+a?n?\s*"
+    r"(?P<ntype>.+?)\s+"
+    r"(?:for the manufacture[^.]+?)\.",
     re.IGNORECASE | re.DOTALL,
 )
 DDTC_RE = re.compile(r"DDTC\s*(\d+[-–]\d+)")
-
+ 
 def parse_page_html(html: str, source_url: str) -> list[dict]:
     """Parse the HTML of a single Federal Register notice page."""
     soup = BeautifulSoup(html, "html.parser")
     body = soup.select_one("div.body") or soup
+    # The Federal Register sometimes injects page-break markers in the middle
+    # of sentences, like "please find enclosed ( printed page 7357) a
+    # certification of a proposed license..."  Strip those out before parsing
+    # so the regex sees the original sentence as a single piece.
+    page_break = re.compile(r"\s*\(\s*printed page\s*\d+\s*\)\s*", re.IGNORECASE)
     # Pull every heading and paragraph in document order.
     blocks = []
     for el in body.find_all(["h2", "h3", "h4", "p"]):
         text = el.get_text(" ", strip=True)
+        # Remove inline page-break markers and collapse any double spaces left
+        text = page_break.sub(" ", text)
+        text = re.sub(r"\s{2,}", " ", text).strip()
         if text:
             blocks.append((el.name, text))
     return parse_blocks(blocks, source_url)
-
+ 
 def parse_blocks(blocks: list[tuple[str, str]], source_url: str) -> list[dict]:
     """Walk the (tag, text) blocks and emit one row per letter."""
     rows = []
@@ -75,8 +85,7 @@ def parse_blocks(blocks: list[tuple[str, str]], source_url: str) -> list[dict]:
                        "ddtc": "", "pursuant_text": "", "description": ""}
             continue
         # A "Congressional Notification Transmittal Letter" heading WITHOUT a
-        # preceding date heading still starts a new letter — we just leave the
-        # date blank for the user to fill in manually.
+        # preceding date heading still starts a new letter just with a blank date
         if (tag == "h2"
                 and text.startswith("Congressional Notification Transmittal Letter")
                 and current is not None
@@ -106,9 +115,8 @@ def parse_blocks(blocks: list[tuple[str, str]], source_url: str) -> list[dict]:
             continue
     if current:
         rows.append(finalize(current))
-
     return rows
-
+ 
 def finalize(r: dict) -> dict:
     """Turn the in-progress dict into the final flat row."""
     # Date -> real date object, or None if missing (gives a blank cell in Excel)
@@ -119,15 +127,22 @@ def finalize(r: dict) -> dict:
             d = datetime.strptime(r["date"], "%B %d, %Y").date()
         except ValueError:
             d = r["date"]
-    # Parse Pursuant-to sentence into three fields
+    # Parse Pursuant-to sentence into three fields.
+    # Try the dollar-amount form first (form A). If it doesn't match, try the
+    # 36(d) standalone form (form B).  For form B, leave Amount blank — the
+    # letter didn't report a dollar threshold, so there's nothing to record.
     section = ntype = amount = ""
-    m = PURSUANT_RE.search(r["pursuant_text"])
+    m = PURSUANT_RE_WITH_AMOUNT.search(r["pursuant_text"])
     if m:
         section = m.group("section").strip()
         ntype = m.group("ntype").strip()
-        # Either group "amount" (dollar threshold) or "no_amount" (36(d) form)
-        # will be populated, never both.
-        amount = (m.group("amount") or m.group("no_amount") or "").strip()
+        amount = m.group("amount").strip()
+    else:
+        m = PURSUANT_RE_NO_AMOUNT.search(r["pursuant_text"])
+        if m:
+            section = m.group("section").strip()
+            ntype = m.group("ntype").strip()
+            # amount stays "" — no dollar value to capture
     return {
         "Notification date": d,
         "Notification number": r["ddtc"],
@@ -137,7 +152,7 @@ def finalize(r: dict) -> dict:
         "Description": r["description"],
         "Source URL": r["source_url"],
     }
-
+ 
 def fetch_and_extract(url: str) -> list[dict]:
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -147,7 +162,7 @@ def fetch_and_extract(url: str) -> list[dict]:
     resp = requests.get(url, headers=headers, timeout=30)
     resp.raise_for_status()
     return parse_page_html(resp.text, url)
-
+ 
 def prompt_for_urls() -> list[str]:
     """Ask the user to paste URLs.  Accepts one or many, separated by any
     whitespace (spaces, tabs, newlines).  Finish with a blank line."""
@@ -169,7 +184,7 @@ def prompt_for_urls() -> list[str]:
     raw_tokens = " ".join(pasted_lines).split()
     urls = [t for t in raw_tokens if t.startswith("http://") or t.startswith("https://")]
     return urls
-
+ 
 def main(urls):
     if not urls:
         print("No URLs provided.  Exiting.")
@@ -184,8 +199,7 @@ def main(urls):
             all_rows.extend(rows)
         except Exception as e:
             print(f"  ERROR: {e}")
-        time.sleep(1)  # be polite to the server
-
+        time.sleep(1)
     if not all_rows:
         print("\nNo letters were extracted.")
         return
@@ -258,9 +272,7 @@ def main(urls):
         print(f"\nERROR: Can't write to {out} — is it open in Excel?")
         print("Close the file and run the program again.")
         return
-    # pandas writes dates as serial numbers without a number format, so Excel
-    # shows them as "45975" instead of "November 14, 2025".  Apply a long-date
-    # format to the Notification date column so they render correctly.
+    # Apply a long-date format to the Notification date column so they render correctly.
     format_status = "applied"
     try:
         wb = load_workbook(out)
@@ -277,9 +289,7 @@ def main(urls):
             count = 0
             for row in ws.iter_rows(min_row=2, min_col=date_col, max_col=date_col):
                 for cell in row:
-                    # "mmmm d, yyyy" matches the wording on federalregister.gov
-                    # pages (e.g. "November 14, 2025"), while keeping the value
-                    # as a real date so Excel can sort/filter it.
+                    # Long date Excel format
                     cell.number_format = 'mmmm d, yyyy'
                     count += 1
             wb.save(out)
@@ -297,7 +307,7 @@ def main(urls):
     print(f"\nDone. {msg}")
     print(f"Output: {out}")
     print(f"Date formatting: {format_status}")
-
+ 
 def _is_blank(v) -> bool:
     """True if a value is empty / NaN / None / whitespace-only string."""
     if v is None:
@@ -313,7 +323,7 @@ def _is_blank(v) -> bool:
         pass
     return False
     print(f"Output: {out}")
-
+ 
 def _pause_before_exit():
     """Keep the console window open when run as a standalone .exe so the
     user can see the results.  Does nothing if no console is attached."""
@@ -321,7 +331,7 @@ def _pause_before_exit():
         input("\nPress Enter to close...")
     except EOFError:
         pass
-
+ 
 if __name__ == "__main__":
     # URLs may also be passed on the command line; if none given, prompt.
     cli_urls = sys.argv[1:]
